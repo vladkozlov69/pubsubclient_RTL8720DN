@@ -368,67 +368,80 @@ uint32_t PubSubClient::readPacket(uint8_t* lengthLength) {
 }
 
 boolean PubSubClient::loop() {
-    if (connected()) {
-        unsigned long t = millis();
-        if ((t - lastInActivity > this->keepAlive*1000UL) || (t - lastOutActivity > this->keepAlive*1000UL)) {
-            if (pingOutstanding) {
-                this->_state = MQTT_CONNECTION_TIMEOUT;
-                _client->stop();
-                return false;
-            } else {
-                this->buffer[0] = MQTTPINGREQ;
-                this->buffer[1] = 0;
-                _client->write(this->buffer,2);
-                lastOutActivity = t;
-                lastInActivity = t;
-                pingOutstanding = true;
+    switch (lastLoopConnectState) {
+        case IDLE:
+            if (connected()) {
+                lastLoopConnectState = CONNECT_CHECK;
+                lastLoopConnect = millis();
+                return true;
             }
-        }
-        if (_client->available()) {
-            uint8_t llen;
-            uint16_t len = readPacket(&llen);
-            uint16_t msgId = 0;
-            uint8_t *payload;
-            if (len > 0) {
-                lastInActivity = t;
-                uint8_t type = this->buffer[0]&0xF0;
-                if (type == MQTTPUBLISH) {
-                    if (callback) {
-                        uint16_t tl = (this->buffer[llen+1]<<8)+this->buffer[llen+2]; /* topic length in bytes */
-                        memmove(this->buffer+llen+2,this->buffer+llen+3,tl); /* move topic inside buffer 1 byte to front */
-                        this->buffer[llen+2+tl] = 0; /* end the topic as a 'C' string with \x00 */
-                        char *topic = (char*) this->buffer+llen+2;
-                        // msgId only present for QOS>0
-                        if ((this->buffer[0]&0x06) == MQTTQOS1) {
-                            msgId = (this->buffer[llen+3+tl]<<8)+this->buffer[llen+3+tl+1];
-                            payload = this->buffer+llen+3+tl+2;
-                            callback(topic,payload,len-llen-3-tl-2);
-
-                            this->buffer[0] = MQTTPUBACK;
-                            this->buffer[1] = 2;
-                            this->buffer[2] = (msgId >> 8);
-                            this->buffer[3] = (msgId & 0xFF);
-                            _client->write(this->buffer,4);
-                            lastOutActivity = t;
-
-                        } else {
-                            payload = this->buffer+llen+3+tl;
-                            callback(topic,payload,len-llen-3-tl);
-                        }
+            return false;
+            break;
+        case CONNECT_CHECK:
+            if (millis() - lastLoopConnect > 500) {
+                lastLoopConnectState = IDLE;
+                unsigned long t = millis();
+                if ((t - lastInActivity > this->keepAlive*1000UL) || (t - lastOutActivity > this->keepAlive*1000UL)) {
+                    if (pingOutstanding) {
+                        this->_state = MQTT_CONNECTION_TIMEOUT;
+                        _client->stop();
+                        return false;
+                    } else {
+                        this->buffer[0] = MQTTPINGREQ;
+                        this->buffer[1] = 0;
+                        _client->write(this->buffer,2);
+                        lastOutActivity = t;
+                        lastInActivity = t;
+                        pingOutstanding = true;
                     }
-                } else if (type == MQTTPINGREQ) {
-                    this->buffer[0] = MQTTPINGRESP;
-                    this->buffer[1] = 0;
-                    _client->write(this->buffer,2);
-                } else if (type == MQTTPINGRESP) {
-                    pingOutstanding = false;
                 }
-            } else if (!connected()) {
-                // readPacket has closed the connection
-                return false;
+                if (_client->available()) {
+                    uint8_t llen;
+                    uint16_t len = readPacket(&llen);
+                    uint16_t msgId = 0;
+                    uint8_t *payload;
+                    if (len > 0) {
+                        lastInActivity = t;
+                        uint8_t type = this->buffer[0]&0xF0;
+                        if (type == MQTTPUBLISH) {
+                            if (callback) {
+                                uint16_t tl = (this->buffer[llen+1]<<8)+this->buffer[llen+2]; /* topic length in bytes */
+                                memmove(this->buffer+llen+2,this->buffer+llen+3,tl); /* move topic inside buffer 1 byte to front */
+                                this->buffer[llen+2+tl] = 0; /* end the topic as a 'C' string with \x00 */
+                                char *topic = (char*) this->buffer+llen+2;
+                                // msgId only present for QOS>0
+                                if ((this->buffer[0]&0x06) == MQTTQOS1) {
+                                    msgId = (this->buffer[llen+3+tl]<<8)+this->buffer[llen+3+tl+1];
+                                    payload = this->buffer+llen+3+tl+2;
+                                    callback(topic,payload,len-llen-3-tl-2);
+
+                                    this->buffer[0] = MQTTPUBACK;
+                                    this->buffer[1] = 2;
+                                    this->buffer[2] = (msgId >> 8);
+                                    this->buffer[3] = (msgId & 0xFF);
+                                    _client->write(this->buffer,4);
+                                    lastOutActivity = t;
+
+                                } else {
+                                    payload = this->buffer+llen+3+tl;
+                                    callback(topic,payload,len-llen-3-tl);
+                                }
+                            }
+                        } else if (type == MQTTPINGREQ) {
+                            this->buffer[0] = MQTTPINGRESP;
+                            this->buffer[1] = 0;
+                            _client->write(this->buffer,2);
+                        } else if (type == MQTTPINGRESP) {
+                            pingOutstanding = false;
+                        }
+                    } else if (!connected()) {
+                        // readPacket has closed the connection
+                        return false;
+                    }
+                }
+                return true;
             }
-        }
-        return true;
+            break;
     }
     return false;
 }

@@ -85,6 +85,11 @@
 
 #define CHECK_STRING_LENGTH(l,s) if (l+2+strnlen(s, this->bufferSize) > this->bufferSize) {_client->stop();return false;}
 
+enum LOOP_CONNECT_STATE {
+    IDLE,
+    CONNECT_CHECK
+};
+
 class PubSubClient : public Print {
 private:
    Client* _client;
@@ -112,6 +117,8 @@ private:
    uint16_t port;
    Stream* stream;
    int _state;
+   unsigned long lastLoopConnect;
+   LOOP_CONNECT_STATE lastLoopConnectState = LOOP_CONNECT_STATE::IDLE;
 public:
    PubSubClient();
    PubSubClient(Client& client);
